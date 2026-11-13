@@ -1,17 +1,14 @@
 import discord
+from discord import app_commands
 from discord.ext import commands
-from discord.ext.commands import has_permissions
 import datetime
 import humanize
 from unity_util import bot_config
+from unity_util.slash_commands import command_context
 import logging
 import asyncio
 import sys
 
-logging.basicConfig(level=logging.INFO, format="[%(levelname)s]\t %(name)s: %(message)s", handlers=[
-    logging.StreamHandler(sys.stdout),
-    logging.FileHandler(f'./logs/{bot_config.LOGGING_FILENAME}')
-])
 
 class Limiter(commands.Cog):
     def __init__(self, client):
@@ -38,8 +35,7 @@ class Limiter(commands.Cog):
             return
         content = message.content # Save this
         time_limit = discord.utils.utcnow() - datetime.timedelta(seconds=bot_config.BUY_SELL_LIMIT_SECONDS)
-        messages = [past_message async for past_message in message.channel.history(after=time_limit)]
-        for past_message in messages:
+        async for past_message in message.channel.history(after=time_limit, limit=None):
             if past_message.author == author and past_message.id != message.id:
                 deletion_success = False
                 try:
@@ -55,25 +51,33 @@ class Limiter(commands.Cog):
 
                 if deletion_success:
                     await self.send_info_message(author, message.channel.id, content, past_message.created_at)
+                return
 
-    @commands.group()
-    @has_permissions(manage_roles=True)
-    async def limiter(self, ctx):
-        if ctx.invoked_subcommand is None:
-            pass
+    limiter = app_commands.Group(
+        name='limiter', description='Manage the buy-sell-trade posting limit',
+        guild_only=True, default_permissions=discord.Permissions(manage_roles=True)
+    )
 
     @limiter.command()
-    async def whitelist(self, ctx, member: discord.Member, seconds: int):
+    @app_commands.checks.has_permissions(manage_roles=True)
+    @app_commands.describe(member="Member allowed to post", seconds="Duration of the exemption in seconds")
+    async def whitelist(self, interaction: discord.Interaction, member: discord.Member, seconds: int):
         """Allows a user to post in the buy-sell-trade channel within the slowmode time"""
+        ctx = await command_context(interaction)
+        if seconds <= 0:
+            await ctx.send('The whitelist duration must be positive.')
+            return
         desc = f"{member.mention} you can now post in <#{bot_config.BUY_SELL_CHANNEL_ID}> for {str(datetime.timedelta(seconds=int(seconds)))}"
         embed = discord.Embed(title=f"Whitelisted user", description=desc, colour=member.colour)
         await ctx.send(embed=embed)
         self.whitelisted_users.append(member.id)
-        await asyncio.sleep(seconds)
         try:
-            self.whitelisted_users.remove(member.id)
-        except ValueError:
-            logging.warning(f"User {member.id} already removed from whitelist")
+            await asyncio.sleep(seconds)
+        finally:
+            try:
+                self.whitelisted_users.remove(member.id)
+            except ValueError:
+                logging.warning(f"User {member.id} already removed from whitelist")
 
     async def make_embed(self, author: discord.Member, deleted_content: str) -> discord.Embed:
         embed = discord.Embed(description=deleted_content, colour=author.colour)
@@ -81,11 +85,6 @@ class Limiter(commands.Cog):
         return embed
 
     async def send_info_message(self, author: discord.Member, channel_id: int, deleted_content: str, creation_time: datetime):
-        if author.dm_channel is None:
-            await author.create_dm()
-
-        dm_channel = author.dm_channel
-
         limit_timestamp = datetime.timedelta(seconds=bot_config.BUY_SELL_LIMIT_SECONDS)
         post_again_formatted_time = (creation_time + limit_timestamp).strftime("%d/%m/%Y %I:%M:%S %p")
 
@@ -96,11 +95,17 @@ class Limiter(commands.Cog):
         embed = await self.make_embed(author, deleted_content)
 
         try:
-            await dm_channel.send(content, embed=embed)
-        except: # If the bot can't DM the user
+            if author.dm_channel is None:
+                await author.create_dm()
+            await author.dm_channel.send(content, embed=embed)
+        except discord.HTTPException:
             backup_channel = self.client.get_channel(bot_config.BUY_SELL_BACKUP_DM_CHANNEL_ID)
+            if backup_channel is None:
+                logging.warning('Could not find the limiter notification channel')
+                return
             content = f"<@{author.id}> {content}"
-            await backup_channel.send(content=content, embed=embed)
+            await backup_channel.send(content=content, embed=embed,
+                allowed_mentions=discord.AllowedMentions(everyone=False, roles=False, users=[author], replied_user=False))
 
 async def setup(client):
     await client.add_cog(Limiter(client))

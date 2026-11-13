@@ -1,11 +1,13 @@
 import httpx
 import discord
+from discord import app_commands
 from discord.ext import commands
 import urllib.parse
 from urllib import parse
 import re
 from typing import Tuple
 from unity_util.menus import menu
+from unity_util.slash_commands import command_context
 
 cex_red = 0xff0000
 cex_logo = 'https://uk.webuy.com/_nuxt/74714aa39f40304c8fac8e7520cc0a35.png'
@@ -49,10 +51,8 @@ class Cex(commands.Cog):
             return
 
         if 'https://uk.webuy.com/' in message.content.lower():
-            for word in message.content.lower().split(' '):
-                if not word.startswith('https://uk.webuy.com/'):
-                    continue
-                if parse.parse_qs(parse.urlsplit(word).query)['id'] == {}:
+            for word in message.content.split():
+                if not word.lower().startswith('https://uk.webuy.com/'):
                     continue
                 try:
                     product_id = parse.parse_qs(parse.urlsplit(word).query)['id'][0]
@@ -67,9 +67,11 @@ class Cex(commands.Cog):
 
 # Commands
 
-    @commands.command()
-    async def search(self, ctx, *, search_term: str):
+    @app_commands.command()
+    @app_commands.describe(search_term="Product to search for on CeX")
+    async def search(self, interaction: discord.Interaction, *, search_term: str):
         """Search the CeX website"""
+        ctx = await command_context(interaction)
         # Prepare and sanitise the search arguments
         index, search_term = self.get_index(search_term)
         cex_search = await self.cex_search(search_term) # Get products
@@ -84,9 +86,9 @@ class Cex(commands.Cog):
             return
 
         # Check that the current index, if modified, is within range
-        if not 0 <= index['current'] < len(cex_search) - 1:
+        if not 0 <= index['current'] < len(cex_search):
             index = {
-                'current': index['current'],
+                'current': 0,
                 'max': len(cex_search) - 1
             }
 
@@ -103,18 +105,20 @@ class Cex(commands.Cog):
         clean_search_term = urllib.parse.quote(search_term) # Clean up the search term for the url
         url = f'https://wss2.cex.uk.webuy.io/v3/boxes?q={clean_search_term}&firstRecord=1&count=50&sortOrder=desc'
 
-        async with httpx.AsyncClient() as client:
-            r = await client.get(url, headers=headers)
+        try:
+            async with httpx.AsyncClient() as client:
+                r = await client.get(url, headers=headers)
+        except httpx.RequestError:
+            return ()
 
         if r.status_code != 200:
             return ()
 
-        products = r.json()
-
-        if products['response']['data']:
-            return tuple(products['response']['data']['boxes'])
-        else:
+        try:
+            boxes = r.json()['response']['data']['boxes']
+        except (KeyError, TypeError, ValueError):
             return ()
+        return tuple(boxes) if isinstance(boxes, list) else ()
 
     def make_cex_embed(self, search_object: dict, index: dict = None) -> discord.Embed:
         """Make embed from search data"""

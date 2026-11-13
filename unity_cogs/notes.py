@@ -1,9 +1,9 @@
 import discord
+from discord import app_commands
 import asyncio
 import sys
 import logging
 from discord.ext import commands
-from discord.ext.commands import has_permissions
 from unity_util import bot_config
 import motor.motor_asyncio
 import time
@@ -11,19 +11,13 @@ from datetime import datetime as dt
 import random
 import string
 from typing import Tuple
-from unity_util.menus import menu
+from unity_util.menus import clear_reactions, menu
+from unity_util.slash_commands import command_alias, command_context
 
 mongo = motor.motor_asyncio.AsyncIOMotorClient(host=bot_config.MONGODB_HOST, port=int(
     bot_config.MONGODB_PORT), replicaSet="rs01", username=bot_config.MONGODB_USERNAME, password=bot_config.MONGODB_PASSWORD, authSource=bot_config.MONGODB_DATABASE, authMechanism='SCRAM-SHA-1')
 db = mongo[bot_config.MONGODB_DATABASE]
 
-logging.basicConfig(level=logging.INFO, format="[%(levelname)s]\t %(name)s: %(message)s", handlers=[
-    logging.StreamHandler(sys.stdout),
-    logging.FileHandler(f'./logs/{bot_config.LOGGING_FILENAME}')
-])
-
-def to_lower(word: str):
-    return word.lower()
 
 class Notes(commands.Cog):
 
@@ -36,17 +30,16 @@ class Notes(commands.Cog):
 
 # Commands
 
-    @commands.group()
-    @has_permissions(manage_roles=True)
-    async def notes(self, ctx):
-        """View moderator notes about users"""
-        if ctx.invoked_subcommand is None:
-            pass
+    notes = app_commands.Group(
+        name='notes', description='Manage moderator notes about users',
+        guild_only=True, default_permissions=discord.Permissions(manage_roles=True)
+    )
 
     @notes.command()
-    @has_permissions(manage_roles=True)
-    async def view(self, ctx, user:discord.Member):
+    @app_commands.checks.has_permissions(manage_roles=True)
+    async def view(self, interaction: discord.Interaction, user: discord.Member):
         """View notes for a user"""
+        ctx = await command_context(interaction)
         notes = await self.get_notes(str(user.id))
 
         if not notes:
@@ -62,9 +55,11 @@ class Notes(commands.Cog):
         await menu(ctx, pages=embeds, page=0, timeout=180)
 
     @notes.command()
-    @has_permissions(manage_roles=True)
-    async def find(self, ctx, note_hash: to_lower):
+    @app_commands.checks.has_permissions(manage_roles=True)
+    async def find(self, interaction: discord.Interaction, note_hash: str):
         """Find user note by hash"""
+        ctx = await command_context(interaction)
+        note_hash = note_hash.lower()
         if len(note_hash) != 7:
             embed = discord.Embed(title="❌ That doesn't look like a valid note hash", colour=ctx.guild.me.colour)
             await ctx.send(embed=embed)
@@ -76,10 +71,12 @@ class Notes(commands.Cog):
         embed = self.make_note_embed(note=data, colour=ctx.guild.me.colour)
         await ctx.send(embed=embed)
 
-    @notes.command(aliases=['remove'])
-    @has_permissions(manage_roles=True)
-    async def delete(self, ctx, note_hash: to_lower):
+    @notes.command()
+    @app_commands.checks.has_permissions(manage_roles=True)
+    async def delete(self, interaction: discord.Interaction, note_hash: str):
         """Delete a user note"""
+        ctx = await command_context(interaction)
+        note_hash = note_hash.lower()
         if len(note_hash) != 7:
             embed = discord.Embed(description="❌ That doesn't look like a valid note hash", colour=ctx.guild.me.colour)
             await ctx.send(embed=embed)
@@ -102,19 +99,16 @@ class Notes(commands.Cog):
         try:
             reaction, user = await self.client.wait_for('reaction_add', timeout=180.0, check=reaction_check)
         except asyncio.TimeoutError:
-            try:
-                await messageObject.clear_reactions()
-            except:
-                pass
+            await clear_reactions(messageObject)
             return
         else:
             # The user has reacted with an emoji in the list, let's find out which one
             if reaction.emoji == '❌':
-                await messageObject.clear_reactions()
+                await clear_reactions(messageObject)
                 return
             if reaction.emoji == '✅':  # Execute order 66
                 try:
-                    await messageObject.clear_reactions()
+                    await clear_reactions(messageObject)
                     await db.notes.delete_one({"hash": note_hash})
                     logging.info(f"Removed user note {note_hash} from the database")
                     embed = discord.Embed(description=f"User note with hash `{note_hash}` removed from the database successfully 🤠", colour=ctx.guild.me.colour)
@@ -123,18 +117,17 @@ class Notes(commands.Cog):
                     logging.error(f"ERROR REMOVING NOTE: {err}")
                     await ctx.send("Couldn't remove the note from the database for some reason. Please consult the logs for more details")
 
-    @notes.command(aliases=['add', 'new'])
-    @has_permissions(manage_roles=True)
-    async def create(self, ctx, user: discord.Member, *, note_content: str = ''):
+    remove = command_alias(delete, 'remove')
+
+    @notes.command()
+    @app_commands.checks.has_permissions(manage_roles=True)
+    @app_commands.describe(user="Member the note concerns", note_content="The moderator note to save")
+    async def create(self, interaction: discord.Interaction, user: discord.Member, note_content: str):
         """Create a note about a user"""
-        if not note_content:
-            await ctx.send(embed=discord.Embed(colour=ctx.guild.me.colour, description=f"Please enter a note for {user.mention}"))
-            def check(m):
-                return m.channel == ctx.channel and m.author == ctx.author
-
-            msg = await self.client.wait_for('message', check=check)
-            note_content = msg.content
-
+        ctx = await command_context(interaction)
+        if not note_content.strip():
+            await ctx.send('Please enter note content.')
+            return
         note = {'user': str(user.id),
         'content': note_content,
         'added_by': str(ctx.author.id),
@@ -149,12 +142,15 @@ class Notes(commands.Cog):
             logging.error(f"ERROR ADDING NOTE: {err}")
             await ctx.send("Couldn't add the note to the database for some reason. Please consult the logs for more details")
 
+    add = command_alias(create, 'add')
+    new = command_alias(create, 'new')
+
 # Helper functions
 
     def make_note_embed(self, note: dict, index: dict = {}, colour: discord.Colour = 0) -> discord.Embed:
         """Construct embed from note"""
         content = f"**Notes for <@{note['user']}>**\n{note['content']}"
-        embed = discord.Embed(description=content, colour=colour)
+        embed = discord.Embed(description=content if len(content) <= 4096 else content[:4093] + '...', colour=colour)
         date = dt.fromtimestamp(note['date_added'])
         embed.add_field(name='Date Added', value=f"{date.day}/{date.month}/{date.year}", inline=True)
         embed.add_field(name='Added by', value=f"<@{note['added_by']}>", inline=True)

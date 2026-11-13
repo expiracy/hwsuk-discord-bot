@@ -1,0 +1,168 @@
+name: hwsuk-discord-bot
+
+x-logging: &logging
+  driver: local
+  options:
+    max-size: '10m'
+    max-file: '3'
+
+services:
+  prepare:
+    image: ${BOT_IMAGE:-hwsuk-discord-bot:local}
+    profiles: [setup]
+    user: '${HWSUK_SETUP_UID:-1000}:${HWSUK_SETUP_GID:-1000}'
+    cap_drop: [ALL]
+    network_mode: none
+    security_opt: ['no-new-privileges:true']
+    entrypoint: [python, -m, unity_util.prepare_secrets]
+    secrets: [input_discord_token, input_mongodb_password, input_praw_client_id, input_praw_client_secret, input_praw_password, input_dvla_api_key]
+    volumes:
+      - type: bind
+        source: ${HWSUK_SECRETS_DIR:-./.docker-secrets}
+        target: /run/hwsuk-secrets
+        bind:
+          create_host_path: false
+
+  bot:
+    image: ${BOT_IMAGE:-hwsuk-discord-bot:local}
+    build:
+      context: .
+      target: production
+    init: true
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+    pids_limit: 128
+    mem_limit: 512m
+    stop_grace_period: 30s
+    networks: [egress, database]
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m,mode=1777
+    depends_on:
+      mongo-init:
+        condition: service_completed_successfully
+      mongo:
+        condition: service_healthy
+    environment:
+      LOGGING_FILENAME: ''
+      DISCORD_TOKEN_FILE: /run/secrets/discord_token
+      DISCORD_SERVER_ID: ${DISCORD_SERVER_ID:?Set DISCORD_SERVER_ID in .env}
+      DISCORD_UPDATER_ROLE: ${DISCORD_UPDATER_ROLE:-0}
+      DISCORD_VERIFIED_ROLE: ${DISCORD_VERIFIED_ROLE:-0}
+      REACTION_CHANNEL_ID: ${REACTION_CHANNEL_ID:-0}
+      MOD_CHANNEL_ID: ${MOD_CHANNEL_ID:-0}
+      REACTION_THRESHOLD: ${REACTION_THRESHOLD:-3}
+      EMBED_REMOVER_CHANNEL_ID: ${EMBED_REMOVER_CHANNEL_ID:-0}
+      BUY_SELL_CHANNEL_ID: ${BUY_SELL_CHANNEL_ID:-0}
+      BUY_SELL_LIMIT_SECONDS: ${BUY_SELL_LIMIT_SECONDS:-259200}
+      BUY_SELL_BACKUP_DM_CHANNEL_ID: ${BUY_SELL_BACKUP_DM_CHANNEL_ID:-0}
+      REPORT_CHANNEL_ID: ${REPORT_CHANNEL_ID:-0}
+      MONGODB_HOST: mongo
+      MONGODB_PORT: '27017'
+      MONGODB_DATABASE: ${MONGODB_DATABASE:-hwsuk}
+      MONGODB_USERNAME: ${MONGODB_USERNAME:-hwsuk_bot}
+      MONGODB_PASSWORD_FILE: /run/secrets/mongodb_password
+      PRAW_CLIENT_ID_FILE: /run/secrets/praw_client_id
+      PRAW_CLIENT_SECRET_FILE: /run/secrets/praw_client_secret
+      PRAW_PASSWORD_FILE: /run/secrets/praw_password
+      PRAW_USERNAME: ${PRAW_USERNAME:-HWSUKMods}
+      PRAW_USER_AGENT: ${PRAW_USER_AGENT:-hwsuk-discord-bot}
+      DVLA_API_KEY_FILE: /run/secrets/dvla_api_key
+    secrets: [discord_token, mongodb_password, praw_client_id, praw_client_secret, praw_password, dvla_api_key]
+    volumes:
+      - type: bind
+        source: ./config.json
+        target: /app/config.json
+        read_only: true
+        bind:
+          create_host_path: false
+    logging: *logging
+
+  mongo:
+    image: ${MONGO_IMAGE:-hwsuk-mongo:local}
+    build: ./docker/mongo
+    init: true
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+    pids_limit: 256
+    mem_limit: 1g
+    stop_grace_period: 60s
+    networks: [database]
+    environment:
+      MONGODB_DATABASE: ${MONGODB_DATABASE:-hwsuk}
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m,mode=1777
+    volumes:
+      - mongo_data:/data/db
+      - mongo_config:/data/configdb
+    healthcheck:
+      test: [CMD, mongosh, --nodb, --quiet, /opt/hwsuk/health.js]
+      interval: 15s
+      timeout: 10s
+      start_period: 60s
+      retries: 5
+    logging: *logging
+
+  mongo-init:
+    image: ${MONGO_IMAGE:-hwsuk-mongo:local}
+    build: ./docker/mongo
+    restart: 'no'
+    init: true
+    pids_limit: 128
+    mem_limit: 512m
+    networks: [database]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+    depends_on:
+      mongo:
+        condition: service_healthy
+    entrypoint: [mongosh, --nodb, --quiet, /opt/hwsuk/bootstrap.js]
+    environment:
+      MONGODB_DATABASE: ${MONGODB_DATABASE:-hwsuk}
+      MONGODB_USERNAME: ${MONGODB_USERNAME:-hwsuk_bot}
+      MONGODB_PASSWORD_FILE: /run/secrets/mongodb_password
+    secrets: [mongodb_password]
+    volumes:
+      - mongo_config:/data/configdb:ro
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m,mode=1777
+    logging: *logging
+
+volumes:
+  mongo_data:
+  mongo_config:
+
+networks:
+  egress:
+  database:
+    internal: true
+
+secrets:
+  discord_token:
+    file: ${HWSUK_SECRETS_DIR:-./.docker-secrets}/discord_token
+  mongodb_password:
+    file: ${HWSUK_SECRETS_DIR:-./.docker-secrets}/mongodb_password
+  praw_client_id:
+    file: ${HWSUK_SECRETS_DIR:-./.docker-secrets}/praw_client_id
+  praw_client_secret:
+    file: ${HWSUK_SECRETS_DIR:-./.docker-secrets}/praw_client_secret
+  praw_password:
+    file: ${HWSUK_SECRETS_DIR:-./.docker-secrets}/praw_password
+  dvla_api_key:
+    file: ${HWSUK_SECRETS_DIR:-./.docker-secrets}/dvla_api_key
+  input_discord_token:
+    environment: DISCORD_TOKEN
+  input_mongodb_password:
+    environment: MONGODB_PASSWORD
+  input_praw_client_id:
+    environment: PRAW_CLIENT_ID
+  input_praw_client_secret:
+    environment: PRAW_CLIENT_SECRET
+  input_praw_password:
+    environment: PRAW_PASSWORD
+  input_dvla_api_key:
+    environment: DVLA_API_KEY

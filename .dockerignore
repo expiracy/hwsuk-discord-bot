@@ -1,0 +1,15 @@
+**
+!Dockerfile
+!requirements.txt
+!requirements-dev.txt
+!.coveragerc
+!bot.py
+!config.json
+!unity_cogs/
+!unity_cogs/*.py
+!unity_services/
+!unity_services/*.py
+!unity_util/
+!unity_util/*.py
+!tests/
+!tests/*.py

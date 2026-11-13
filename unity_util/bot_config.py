@@ -1,19 +1,24 @@
 import os
 from datetime import datetime
+from pathlib import Path
 
 def get_env(key, required=False, or_else=None):
     value = os.environ.get(key)
+    secret_file = os.environ.get(f"{key}_FILE")
+    if secret_file:
+        if value is not None:
+            raise RuntimeError(f"Set only one of {key} and {key}_FILE.")
+        try:
+            value = Path(secret_file).read_text().rstrip('\r\n')
+        except (OSError, UnicodeError):
+            raise RuntimeError(f"Could not read the secret file for {key}.") from None
+    if required and not value:
+        raise RuntimeError(f"Required environment variable {key} is missing or empty.")
 
     if required and or_else:
         print(f"get_env(): for {key}, or_else parameter was ignored because this variable is required")
 
-    if value is not None:
-        return value
-    else:
-        if required:
-            raise RuntimeError(f"Required environment variable {key} is missing.")
-        else:
-            return or_else
+    return value if value is not None else or_else
 
 
 MONGODB_HOST = get_env("MONGODB_HOST", or_else="127.0.0.1")
@@ -50,3 +55,4 @@ DVLA_API_KEY = get_env("DVLA_API_KEY", required=True)
 REPORT_CHANNEL_ID = int(get_env("REPORT_CHANNEL_ID", or_else="810214651433582633"))
 
 LOGGING_FILENAME = get_env("LOGGING_FILENAME", or_else=f'bot-{datetime.now().strftime("%m-%d-%Y-%H%M%S")}.log')
+BOT_HEALTH_FILE = get_env("BOT_HEALTH_FILE")

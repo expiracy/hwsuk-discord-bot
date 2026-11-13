@@ -103,6 +103,8 @@ celerybeat.pid
 
 # Environments
 .env
+.docker-secrets/
+backups/
 .venv
 env/
 venv/

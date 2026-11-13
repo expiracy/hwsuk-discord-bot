@@ -1,4 +1,5 @@
 import discord
+from discord import app_commands
 from discord.ext import commands
 import httpx
 import bs4
@@ -8,6 +9,8 @@ from datetime import datetime as dt
 import re
 import math
 from typing import Tuple, List
+from urllib.parse import quote
+from unity_util.slash_commands import command_alias, command_context
 
 headers = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 11_2_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/89.0.4389.82 Safari/537.36'}
 
@@ -16,14 +19,16 @@ class Ebay(commands.Cog):
     def __init__(self, client):
         self.client = client
 
-    @commands.command(aliases=['pc','chk','price','pricecheck'])
-    async def check(self, ctx, *, search_term):
+    @app_commands.command(description="Get the average sold price of an item from eBay")
+    @app_commands.describe(search_term="Product to price-check; use -word to exclude words")
+    async def check(self, interaction: discord.Interaction, *, search_term: str):
         """Gets the average price of an item from Ebay
         
         Usage example:
-        !check dell xps 15 -dead -broken -scratched
+        /check search_term:"dell xps 15 -dead -broken -scratched"
         words beginning with `-` are added to the list of words to be filtered out"""
         
+        ctx = await command_context(interaction)
         search_term = search_term.lower()
         # If the searchterm with boolean operators removed is less than 6 characters
         if len(' '.join([i for i in search_term.split(' ') if not i.startswith('-')])) < 6:
@@ -31,46 +36,50 @@ class Ebay(commands.Cog):
             await ctx.send(embed=embed)
             return
 
-        async with ctx.channel.typing():
-            filtered_term, filtered_words = self.get_filter(search_term)
-            page = None
-            try:
-                page = await self.make_soup(filtered_term)
-            except (httpx.ReadError, httpx.ReadTimeout):
-                await ctx.send(embed=self.error_embed('read_timeout'))
-                return
+        filtered_term, filtered_words = self.get_filter(search_term)
+        page = None
+        try:
+            page = await self.make_soup(filtered_term)
+        except httpx.RequestError:
+            await ctx.send(embed=self.error_embed('read_timeout'))
+            return
 
-            product_list = None
+        product_list = None
 
-            try:
-                product_list = page.find('ul', {'class': 'srp-results'}).find_all('li', {'class':'s-item'})
-            except AttributeError:
-                await ctx.send(embed=self.error_embed('parse_error'))
-                return
+        try:
+            product_list = page.find('ul', {'class': 'srp-results'}).find_all('li', {'class':'s-item'})
+        except AttributeError:
+            await ctx.send(embed=self.error_embed('parse_error'))
+            return
 
-            products = [self.get_product_info(i) for i in product_list if self.get_product_info(i)]
-            # Removes listings that don't pass the filter
-            filtered_listings = [i for i in products if not self.filtered_out(i['title'], filtered_words)]
-            if not filtered_listings: # If no listings pass filter
-                await self.no_results(ctx, search_term)
-                return
-            # If there are listings that passed the filter
-            # Get the 25th, 50th and 75th percentiles of the price range
-            quartiles = self.find_quartiles([i['price'] for i in filtered_listings])
-            box_plot = [i['price'] for i in filtered_listings if quartiles[0] <= i['price'] <= quartiles [2]]
-            average = sum(box_plot) / len(box_plot)
-            # Get variance
-            variance = self.determine_variance(box_plot)
-            # Make and send the embed
-            embed_details = {"title": f"Results for {filtered_term}",
-                            "range": [quartiles[0], quartiles[2]],
-                            "median": quartiles[1],
-                            "average": average,
-                            "variance": variance,
-                            "num_of_items": len(box_plot),
-                            "filtered_words": [i.strip('-') for i in search_term.split(' ') if i.startswith('-')]}
-            embed = self.make_embed(embed_details)
-            await ctx.send(embed=embed)
+        products = [self.get_product_info(i) for i in product_list if self.get_product_info(i)]
+        # Removes listings that don't pass the filter
+        filtered_listings = [i for i in products if not self.filtered_out(i['title'], filtered_words)]
+        if not filtered_listings: # If no listings pass filter
+            await self.no_results(ctx, search_term)
+            return
+        # If there are listings that passed the filter
+        # Get the 25th, 50th and 75th percentiles of the price range
+        quartiles = self.find_quartiles([i['price'] for i in filtered_listings])
+        box_plot = [i['price'] for i in filtered_listings if quartiles[0] <= i['price'] <= quartiles [2]]
+        average = sum(box_plot) / len(box_plot)
+        # Get variance
+        variance = self.determine_variance(box_plot)
+        # Make and send the embed
+        embed_details = {"title": f"Results for {filtered_term}",
+                        "range": [quartiles[0], quartiles[2]],
+                        "median": quartiles[1],
+                        "average": average,
+                        "variance": variance,
+                        "num_of_items": len(box_plot),
+                        "filtered_words": [i.strip('-') for i in search_term.split(' ') if i.startswith('-')]}
+        embed = self.make_embed(embed_details)
+        await ctx.send(embed=embed)
+
+    pc = command_alias(check, 'pc')
+    chk = command_alias(check, 'chk')
+    price = command_alias(check, 'price')
+    pricecheck = command_alias(check, 'pricecheck')
 
     def filtered_out(self, title: str, filtered_words: list) -> bool:
         """Checks whether any words from the filter are in the listing title"""
@@ -99,7 +108,7 @@ class Ebay(commands.Cog):
 
     async def make_soup(self, search_term):
         """Returns a BeautifulSoup object from an ebay search"""
-        url = f"https://www.ebay.co.uk/sch/i.html?_from=R40&_nkw={search_term}&_sacat=0&rt=nc&LH_Sold=1&LH_Complete=1&_ipg=200&LH_ItemCondition=4&LH_PrefLoc=1"
+        url = f"https://www.ebay.co.uk/sch/i.html?_from=R40&_nkw={quote(search_term, safe='')}&_sacat=0&rt=nc&LH_Sold=1&LH_Complete=1&_ipg=200&LH_ItemCondition=4&LH_PrefLoc=1"
 
         async with httpx.AsyncClient() as client:
             r = await client.get(url, headers=headers)
@@ -134,11 +143,7 @@ class Ebay(commands.Cog):
         # search term with boolean operators removed
         filtered_search_term = [i for i in search_term if not i.startswith('-')]
         # remove words in search from filter
-        for word in words:
-            if word in filtered_search_term:
-                words.remove(word)
-                if word in filtered_words:
-                    filtered_words.remove(word)
+        words = [word for word in words if word not in filtered_search_term]
         # remove words from filter if searching for certain things
         for key in edge_cases.keys():
             for word in edge_cases[key]:
@@ -165,28 +170,15 @@ class Ebay(commands.Cog):
 
     def parse_price(self, product):
         """Retrieves the full price from a product listing"""
-        log_reg = re.compile('\+\s£(\d+\.\d+).*')
-        base_price = product.find('span', {'class': 's-item__price'}).contents[0].contents[0]
-        if '£' not in base_price: # Ignore foreign listings
+        price = product.find('span', {'class': 's-item__price'}).get_text(strip=True)
+        if not price.startswith('£'):
             return None
-        base_price = float(product.find('span', {'class': 's-item__price'}).contents[0].contents[0].strip('£').replace(',','')) # Find the listing price
-        if not product.find('span', {'class': 's-item__logisticsCost'}): # If there is no postage price return the listing price
+        base_price = float(price[1:].replace(',', ''))
+        logistics = product.find('span', {'class': 's-item__logisticsCost'})
+        if logistics is None:
             return base_price
-        logistics = product.find('span', {'class': 's-item__logisticsCost'}).contents[0]
-        if type(logistics) is bs4.element.NavigableString:
-            if logistics.lower() in ['free postage', 'postage not specified']: # Ignore common strings
-                postage = 0
-            elif log_reg.match(logistics): # Find the price if there's a regex match
-                postage = float(log_reg.match(logistics).group(1))
-            else:
-                postage = 0
-        else: # If type is not NavigableString (most likely to be Tag)
-            logistics = logistics.contents[-1]
-            if log_reg.match(logistics): # Apply regex
-                postage = float(log_reg.match(logistics).group(1))
-            else: # Account for edge cases
-                postage = 0
-        return base_price + postage
+        postage = re.search(r'\+\s*£([\d,]+(?:\.\d+)?)', logistics.get_text(' ', strip=True))
+        return base_price + (float(postage.group(1).replace(',', '')) if postage else 0)
 
     def parse_date(self, product) -> datetime.datetime:
         """Retrieves the ended date from a product listing"""

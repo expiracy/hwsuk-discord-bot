@@ -11,11 +11,20 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from discord.ext import commands
+from discord import app_commands
 
 from tests.support import BotTestCase, TEST_ENV
+from tests.slash_support import SlashBotTestCase
 
 
-class ExtensionTests(BotTestCase):
+class ExtensionTests(SlashBotTestCase):
+    async def test_extensions_do_not_open_their_own_log_files(self):
+        with patch("logging.FileHandler") as file_handler:
+            with patch("motor.motor_asyncio.AsyncIOMotorClient"), patch("praw.Reddit"):
+                for extension in json.loads(Path("config.json").read_text())["preloaded"]:
+                    await self.client.load_extension(f"unity_cogs.{extension}")
+        file_handler.assert_not_called()
+
     async def test_extension_registers_its_cog_and_listener(self):
         await self.client.load_extension("unity_cogs.feedback")
 
@@ -45,56 +54,68 @@ class ExtensionTests(BotTestCase):
     async def test_owner_load_registers_extension_before_announcing_success(self):
         application = await self.use_application()
 
-        async def confirm_loaded(content):
+        async def confirm_loaded(**kwargs):
             self.assertIsNotNone(self.client.get_cog("Feedback"))
+            self.client.tree.sync.assert_awaited_once()
 
-        ctx = SimpleNamespace(send=AsyncMock(side_effect=confirm_loaded))
-        await application.load.callback(ctx, "feedback")
+        command = self.client.tree.get_command("load")
+        self.assertIsNotNone(command)
+        interaction = self.interaction(command)
+        interaction.followup.send.side_effect = confirm_loaded
+        await command.callback(interaction, "feedback")
 
-        ctx.send.assert_awaited_once_with("feedback loaded")
+        self.assertEqual(interaction.followup.send.call_args.kwargs["content"], "feedback loaded")
 
     async def test_owner_unload_removes_extension_before_announcing_success(self):
         application = await self.use_application()
         await self.client.load_extension("unity_cogs.feedback")
 
-        async def confirm_unloaded(content):
+        async def confirm_unloaded(**kwargs):
             self.assertIsNone(self.client.get_cog("Feedback"))
             self.assertNotIn("unity_cogs.feedback", self.client.extensions)
+            self.client.tree.sync.assert_awaited_once()
 
-        ctx = SimpleNamespace(send=AsyncMock(side_effect=confirm_unloaded))
-        await application.unload.callback(ctx, "feedback")
+        command = self.client.tree.get_command("unload")
+        self.assertIsNotNone(command)
+        interaction = self.interaction(command)
+        interaction.followup.send.side_effect = confirm_unloaded
+        await command.callback(interaction, "feedback")
 
-        ctx.send.assert_awaited_once_with("feedback unloaded")
+        self.assertEqual(interaction.followup.send.call_args.kwargs["content"], "feedback unloaded")
 
     async def test_owner_reload_replaces_cog_before_announcing_success(self):
         application = await self.use_application()
         await self.client.load_extension("unity_cogs.feedback")
         original = self.client.get_cog("Feedback")
 
-        async def confirm_reloaded(content):
+        async def confirm_reloaded(**kwargs):
             self.assertIsNotNone(self.client.get_cog("Feedback"))
             self.assertIsNot(self.client.get_cog("Feedback"), original)
             self.assertEqual(len(self.client.extra_events["on_message"]), 1)
+            self.client.tree.sync.assert_awaited_once()
 
-        ctx = SimpleNamespace(send=AsyncMock(side_effect=confirm_reloaded))
-        await application.reload.callback(ctx, "feedback")
+        command = self.client.tree.get_command("reload")
+        self.assertIsNotNone(command)
+        interaction = self.interaction(command)
+        interaction.followup.send.side_effect = confirm_reloaded
+        await command.callback(interaction, "feedback")
 
-        ctx.send.assert_awaited_once_with("feedback reloaded")
+        self.assertEqual(interaction.followup.send.call_args.kwargs["content"], "feedback reloaded")
 
     async def test_failed_owner_load_reports_error_without_announcing_success(self):
         application = await self.use_application()
-        ctx = SimpleNamespace(send=AsyncMock(), command=application.load)
+        interaction = self.interaction(application.load)
 
         with self.assertRaises(commands.ExtensionNotFound) as failure:
-            await application.load.callback(ctx, "missing_extension")
-        ctx.send.assert_not_called()
+            await application.load.callback(interaction, "missing_extension")
+        interaction.followup.send.assert_not_called()
 
         with self.assertLogs(level="ERROR") as logs:
-            with patch.object(commands.Bot, "on_command_error", new_callable=AsyncMock):
-                await self.client.on_command_error(ctx, commands.CommandInvokeError(failure.exception))
+            await self.client.tree.on_error(interaction, app_commands.CommandInvokeError(application.load, failure.exception))
 
-        ctx.send.assert_awaited_once()
-        self.assertIn("missing_extension", ctx.send.call_args.args[0])
+        interaction.followup.send.assert_awaited_once()
+        self.assertIn("missing_extension", interaction.followup.send.call_args.args[0])
+        self.assertTrue(interaction.followup.send.call_args.kwargs["ephemeral"])
         self.assertIn("missing_extension", "\n".join(logs.output))
         self.assertNotIn("unity_cogs.missing_extension", self.client.extensions)
 
@@ -146,7 +167,10 @@ class ExtensionTests(BotTestCase):
             "Feedback", "Verify", "Cex", "Limiter", "Ebay", "Notes", "MOT",
             "UniversalScammerList", "EmbedRemover", "ReactReport",
         })
-        self.assertEqual({command.qualified_name for command in self.client.walk_commands()}, {
+        registered = {command.qualified_name for command in self.client.walk_commands()}
+        registered.update(command.qualified_name for command in self.client.tree.walk_commands()
+                          if "alias_for" not in command.extras)
+        self.assertEqual(registered, {
             "help", "load", "unload", "reload", "verify", "whois", "editflair", "status",
             "removeuser", "search", "limiter", "limiter whitelist", "check", "notes",
             "notes view", "notes find", "notes delete", "notes create", "mot", "usl",
@@ -193,5 +217,7 @@ class ExtensionTests(BotTestCase):
         await self.client.load_extension("unity_cogs.rendermeme")
 
         self.assertIsNotNone(self.client.get_cog("RenderMeme"))
-        self.assertIsNotNone(self.client.get_command("rd"))
-        self.assertIs(self.client.get_command("rd"), self.client.get_command("wa"))
+        self.assertIsNotNone(self.client.tree.get_command("rd"))
+        self.assertIsNotNone(self.client.tree.get_command("wa"))
+        self.assertEqual(self.client.tree.get_command("rd").callback, self.client.tree.get_command("wa").callback)
+        self.assertIsNone(self.client.get_command("rd"))

@@ -1,4 +1,5 @@
 import discord
+from discord import app_commands
 from discord.ext import commands
 import httpx
 import logging
@@ -7,12 +8,9 @@ from unity_util import bot_config
 from datetime import datetime as dt
 from colour import Color as Colour
 from unity_util.menus import menu
+from unity_util.slash_commands import command_context
 
 
-logging.basicConfig(level=logging.INFO, format="[%(levelname)s]\t %(name)s: %(message)s", handlers=[
-    logging.StreamHandler(sys.stdout),
-    logging.FileHandler(f'./logs/{bot_config.LOGGING_FILENAME}')
-])
 
 class OdometerReading:
     def __init__(self, value: str, unit: str):
@@ -45,6 +43,11 @@ class Vehicle:
         self.model = data['model'].capitalize()
         self.fuel_type = data['fuelType']
         self.colour = data['primaryColour']
+        try:
+            rgb = Colour(self.colour).rgb
+            self.embed_colour = discord.Colour.from_rgb(*(int(component * 255) for component in rgb))
+        except ValueError:
+            self.embed_colour = discord.Colour.default()
         self.tests = tuple([MotTest(i) for i in data['motTests']]) if 'motTests' in data else tuple([])
         if self.tests:
             self.embeds = tuple([self.make_embed(i) for i in range(len(self.tests))])
@@ -53,18 +56,14 @@ class Vehicle:
             self.embeds = tuple([self.make_basic_embed()])
 
     def make_basic_embed(self):
-        c = Colour(self.colour).rgb
-        new_c = discord.Colour.from_rgb(int(c[0] * 255), int(c[1] * 255), int(c[2] * 255))
-        embed = discord.Embed(title=f'{self.registration_date.year} {self.make} {self.model}', colour=new_c)
+        embed = discord.Embed(title=f'{self.registration_date.year} {self.make} {self.model}', colour=self.embed_colour)
         embed.add_field(name='MOT Expiry', value=self.mot_expiry_date.strftime("%d/%m/%Y"), inline=True)
         embed.add_field(name='Colour', value=self.colour, inline=True)
         return embed
 
     def make_embed(self, test_index) -> discord.Embed:
-        c = Colour(self.colour).rgb
-        new_c = discord.Colour.from_rgb(int(c[0] * 255), int(c[1] * 255), int(c[2] * 255))
         test = self.tests[test_index]
-        embed = discord.Embed(title=f'{self.registration_date.year} {self.make} {self.model}', colour=new_c)
+        embed = discord.Embed(title=f'{self.registration_date.year} {self.make} {self.model}', colour=self.embed_colour)
         embed.add_field(name='MOT Result', value=test.result, inline=True)
         embed.add_field(name='MOT Date', value=test.completed_date.strftime("%d/%m/%Y"), inline=True)
         if test.result != 'FAILED':
@@ -81,9 +80,12 @@ async def get_vehicle(registration: str) -> Vehicle:
     url = f'https://beta.check-mot.service.gov.uk/trade/vehicles/mot-tests/?registration={registration}'
     async with httpx.AsyncClient() as client:
         data = await client.get(url, headers=headers)
+        if data.status_code == 404:
+            return None
+        data.raise_for_status()
         json = data.json()
 
-    if 'httpStatus' in json: # 404
+    if not json or 'httpStatus' in json: # 404 or no results
         return None
 
     return Vehicle(json[0])
@@ -101,9 +103,16 @@ class MOT(commands.Cog):
 
 # Commands
 
-    @commands.command(name='mot')
-    async def _mot(self, ctx, registration: str, year: int = 0):
-        vehicle = await get_vehicle(registration)
+    @app_commands.command(name='mot', description="Look up a vehicle's MOT history")
+    @app_commands.describe(registration="Vehicle registration number", year="Only show MOT tests from this year")
+    async def _mot(self, interaction: discord.Interaction, registration: str, year: int = 0):
+        ctx = await command_context(interaction)
+        try:
+            vehicle = await get_vehicle(registration)
+        except (httpx.HTTPError, KeyError, TypeError, ValueError):
+            logging.warning('MOT service returned an unavailable or invalid response')
+            await ctx.send(embed=self.make_error_embed(ctx, 'serviceUnavailable'))
+            return
 
         if not vehicle:
             error_embed = self.make_error_embed(ctx, 'noVehicleFound')
@@ -136,6 +145,7 @@ class MOT(commands.Cog):
 
     def make_error_embed(self, ctx, error_type: str) -> discord.Embed:
         error_codes = {
+            'serviceUnavailable': 'The MOT service is currently unavailable. Please try again later.',
             'noVehicleFound': 'No vehicle found matching that registration',
             'noTestsFound': 'No MOT tests exist for that year'
         }

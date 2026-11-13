@@ -1,13 +1,12 @@
 from discord.ext import commands
+import discord
+from discord import app_commands
 from unity_util import bot_config
+from unity_util.slash_commands import command_alias, command_context
 import logging
 import sys
 import random
 
-logging.basicConfig(level=logging.INFO, format="[%(levelname)s]\t %(name)s: %(message)s", handlers=[
-    logging.StreamHandler(sys.stdout),
-    logging.FileHandler(f'./logs/{bot_config.LOGGING_FILENAME}')
-])
 
 IMAGE_LINKS = [
     "https://cdn.discordapp.com/attachments/292035708779102208/800403298096119848/eae418cc13c3a477777624169021de320caca7a2827e2dfaf2af21d00f8b1780_1.png",
@@ -45,10 +44,13 @@ class RenderMeme(commands.Cog):
     async def on_ready(self):
         print('Renderdistance meme cog online')
 
-    @commands.command(name="rd", aliases=["wa"])
-    async def _rd(self, ctx):
+    @app_commands.command(name="rd", description="Send a random meme")
+    async def _rd(self, interaction: discord.Interaction):
+        ctx = await command_context(interaction)
         await ctx.send(content=random.choice(IMAGE_LINKS))
         return
+
+    wa = command_alias(_rd, 'wa')
 
 
 async def setup(client):

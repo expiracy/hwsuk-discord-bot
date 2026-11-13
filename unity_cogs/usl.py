@@ -2,16 +2,14 @@ import re
 import sys
 import logging
 import discord
+from discord import app_commands
 
 from discord.ext import commands
 from unity_util import bot_config
+from unity_util.slash_commands import command_context
 from unity_services import universal_scammer_list as usl
 
 
-logging.basicConfig(level=logging.INFO, format="[%(levelname)s]\t %(name)s: %(message)s", handlers=[
-    logging.StreamHandler(sys.stdout),
-    logging.FileHandler(f'./logs/{bot_config.LOGGING_FILENAME}')
-])
 
 EMBED_BANNED_COLOUR = 0xb00e0e
 EMBED_NOT_BANNED_COLOUR = 0x3cb00e
@@ -26,11 +24,13 @@ class UniversalScammerList(commands.Cog):
     async def on_ready(self):
         print('Universal Scammer List search cog online')
 
-    @commands.command(name='usl')
-    async def query_universal_scammer_list(self, ctx, *, username):
+    @app_commands.command(name='usl')
+    @app_commands.describe(username="Reddit username to check against the Universal Scammer List")
+    async def query_universal_scammer_list(self, interaction: discord.Interaction, *, username: str):
         """
         Queries the Universal Scammer List to get information about a user.
         """
+        ctx = await command_context(interaction)
 
         # Strip the username prefix, if it is present.
         # The USL API request will fail if we pass this in.
@@ -48,6 +48,9 @@ class UniversalScammerList(commands.Cog):
 
         try:
             response = await usl.fetch_usl_user_data(username)
+            if not isinstance(response, dict) or not isinstance(response.get('banned'), bool) or not response.get('person'):
+                await ctx.send('USL is currently unavailable. This user\'s scammer-list status is unknown.')
+                return
             await ctx.send(embed=self.make_embed(response))
         except RuntimeError as e:
             logging.warning(f"Error while querying USL API: {e}")

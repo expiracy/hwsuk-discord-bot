@@ -1,0 +1,8 @@
+# Development only: production keeps application code inside the image.
+services:
+  bot:
+    volumes:
+      - ./bot.py:/app/bot.py:ro
+      - ./unity_cogs:/app/unity_cogs:ro
+      - ./unity_services:/app/unity_services:ro
+      - ./unity_util:/app/unity_util:ro

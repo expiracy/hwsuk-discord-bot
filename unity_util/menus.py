@@ -1,6 +1,13 @@
 import discord
 
 
+async def clear_reactions(message):
+    try:
+        await message.clear_reactions()
+    except discord.HTTPException:
+        pass
+
+
 class PaginationView(discord.ui.View):
     def __init__(self, author_id, pages, page, timeout):
         super().__init__(timeout=timeout)
