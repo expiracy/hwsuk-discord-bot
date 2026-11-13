@@ -57,5 +57,5 @@ class Feedback(commands.Cog):
 
         await channel.send(embed=embed)
 
-def setup(client):
-    client.add_cog(Feedback(client))
+async def setup(client):
+    await client.add_cog(Feedback(client))

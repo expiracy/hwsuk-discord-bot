@@ -65,5 +65,5 @@ class UniversalScammerList(commands.Cog):
         return embed
 
 
-def setup(client):
-    client.add_cog(UniversalScammerList(client))
+async def setup(client):
+    await client.add_cog(UniversalScammerList(client))

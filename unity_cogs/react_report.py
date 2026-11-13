@@ -1,5 +1,5 @@
 import sys
-import motor
+import motor.motor_asyncio
 import logging
 import discord
 import datetime
@@ -158,5 +158,5 @@ class ReactReport(commands.Cog):
     def create_deleted_report_embed(self, message: discord.Message):
         return discord.Embed(title="Reported message deleted", colour=discord.Colour.green(), description=message.clean_content)
 
-def setup(client):
-    client.add_cog(ReactReport(client))
+async def setup(client):
+    await client.add_cog(ReactReport(client))

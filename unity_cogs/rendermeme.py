@@ -51,5 +51,5 @@ class RenderMeme(commands.Cog):
         return
 
 
-def setup(client):
-    client.add_cog(RenderMeme(client))
+async def setup(client):
+    await client.add_cog(RenderMeme(client))

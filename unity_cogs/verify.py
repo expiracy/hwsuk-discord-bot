@@ -381,5 +381,10 @@ class Verify(commands.Cog):
         except Exception as err:
             logging.error(f'ERROR MONITORING DB: {err}')
 
-def setup(client):
-    client.add_cog(Verify(client))
+    @monitor_db.before_loop
+    async def before_monitor_db(self):
+        await self.client.wait_until_ready()
+
+
+async def setup(client):
+    await client.add_cog(Verify(client))

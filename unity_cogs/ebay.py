@@ -295,5 +295,5 @@ class Ebay(commands.Cog):
         }
         return discord.Embed(title='Error', description=errors[error], colour=0xDD2E44)
 
-def setup(client):
-    client.add_cog(Ebay(client))
+async def setup(client):
+    await client.add_cog(Ebay(client))

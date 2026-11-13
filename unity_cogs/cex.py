@@ -5,9 +5,7 @@ import urllib.parse
 from urllib import parse
 import re
 from typing import Tuple
-from redbot.core.utils.menus import menu, prev_page, next_page
-
-CUSTOM_CONTROLS = {"⬅️": prev_page, "➡️": next_page}
+from unity_util.menus import menu
 
 cex_red = 0xff0000
 cex_logo = 'https://uk.webuy.com/_nuxt/74714aa39f40304c8fac8e7520cc0a35.png'
@@ -93,7 +91,7 @@ class Cex(commands.Cog):
             }
 
         cex_embeds = [self.make_cex_embed(cex_search[i], {'current': i, 'max': len(cex_search) - 1}) for i in range(len(cex_search))]
-        await menu(ctx, pages=cex_embeds, controls=CUSTOM_CONTROLS, message=None, page=index['current'], timeout=180)
+        await menu(ctx, pages=cex_embeds, page=index['current'], timeout=180)
 
     # Helper functions
 
@@ -169,5 +167,5 @@ class Cex(commands.Cog):
             index['current'] = 0
         return index, search_term
 
-def setup(client):
-    client.add_cog(Cex(client))
+async def setup(client):
+    await client.add_cog(Cex(client))

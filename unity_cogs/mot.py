@@ -6,9 +6,7 @@ import sys
 from unity_util import bot_config
 from datetime import datetime as dt
 from colour import Color as Colour
-from redbot.core.utils.menus import menu, prev_page, next_page
-
-CUSTOM_CONTROLS = {"⬅️": prev_page, "➡️": next_page}
+from unity_util.menus import menu
 
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s]\t %(name)s: %(message)s", handlers=[
@@ -126,7 +124,7 @@ class MOT(commands.Cog):
                 await ctx.send(embed=mot_embeds[0])
                 return
 
-            await menu(ctx, pages=mot_embeds, controls=CUSTOM_CONTROLS, message=None, page=0, timeout=180)
+            await menu(ctx, pages=mot_embeds, page=0, timeout=180)
 
         else:
 
@@ -134,7 +132,7 @@ class MOT(commands.Cog):
                 await ctx.send(embed=vehicle.embeds[0])
                 return
 
-            await menu(ctx, pages=vehicle.embeds, controls=CUSTOM_CONTROLS, message=None, page=0, timeout=120)
+            await menu(ctx, pages=vehicle.embeds, page=0, timeout=120)
 
     def make_error_embed(self, ctx, error_type: str) -> discord.Embed:
         error_codes = {
@@ -143,5 +141,5 @@ class MOT(commands.Cog):
         }
         return discord.Embed(description=error_codes[error_type], colour=ctx.guild.me.colour if ctx.guild else None)
 
-def setup(client):
-    client.add_cog(MOT(client))
+async def setup(client):
+    await client.add_cog(MOT(client))

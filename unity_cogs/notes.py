@@ -11,9 +11,7 @@ from datetime import datetime as dt
 import random
 import string
 from typing import Tuple
-from redbot.core.utils.menus import menu, prev_page, next_page
-
-CUSTOM_CONTROLS = {"⬅️": prev_page, "➡️": next_page}
+from unity_util.menus import menu
 
 mongo = motor.motor_asyncio.AsyncIOMotorClient(host=bot_config.MONGODB_HOST, port=int(
     bot_config.MONGODB_PORT), replicaSet="rs01", username=bot_config.MONGODB_USERNAME, password=bot_config.MONGODB_PASSWORD, authSource=bot_config.MONGODB_DATABASE, authMechanism='SCRAM-SHA-1')
@@ -61,7 +59,7 @@ class Notes(commands.Cog):
 
         embeds = [self.make_note_embed(notes[i], {'current': i, 'max': len(notes) - 1}, ctx.guild.me.colour) for i in range(len(notes))]
         embeds.reverse() # Sort newest first
-        await menu(ctx, pages=embeds, controls=CUSTOM_CONTROLS, message=None, page=0, timeout=180)
+        await menu(ctx, pages=embeds, page=0, timeout=180)
 
     @notes.command()
     @has_permissions(manage_roles=True)
@@ -191,5 +189,5 @@ class Notes(commands.Cog):
         embed = discord.Embed(description="❌ No notes found for this user", colour=ctx.guild.me.colour)
         await ctx.send(embed=embed)
 
-def setup(client):
-    client.add_cog(Notes(client))
+async def setup(client):
+    await client.add_cog(Notes(client))

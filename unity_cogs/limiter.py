@@ -37,8 +37,8 @@ class Limiter(commands.Cog):
         if author.id in self.whitelisted_users:
             return
         content = message.content # Save this
-        time_limit = datetime.datetime.now() - datetime.timedelta(seconds=bot_config.BUY_SELL_LIMIT_SECONDS)
-        messages = await message.channel.history(after=time_limit).flatten()
+        time_limit = discord.utils.utcnow() - datetime.timedelta(seconds=bot_config.BUY_SELL_LIMIT_SECONDS)
+        messages = [past_message async for past_message in message.channel.history(after=time_limit)]
         for past_message in messages:
             if past_message.author == author and past_message.id != message.id:
                 deletion_success = False
@@ -76,12 +76,8 @@ class Limiter(commands.Cog):
             logging.warning(f"User {member.id} already removed from whitelist")
 
     async def make_embed(self, author: discord.Member, deleted_content: str) -> discord.Embed:
-        user = await self.client.fetch_user(author.id)
         embed = discord.Embed(description=deleted_content, colour=author.colour)
-        if author.avatar is None:
-            embed.set_author(name=author.display_name, icon_url = f"https://cdn.discordapp.com/embed/avatars/{user.discriminator}.png")
-        else:
-            embed.set_author(name=author.display_name, icon_url = f"https://cdn.discordapp.com/avatars/{author.id}/{author.avatar}.png")
+        embed.set_author(name=author.display_name, icon_url=author.display_avatar.url)
         return embed
 
     async def send_info_message(self, author: discord.Member, channel_id: int, deleted_content: str, creation_time: datetime):
@@ -106,5 +102,5 @@ class Limiter(commands.Cog):
             content = f"<@{author.id}> {content}"
             await backup_channel.send(content=content, embed=embed)
 
-def setup(client):
-    client.add_cog(Limiter(client))
+async def setup(client):
+    await client.add_cog(Limiter(client))

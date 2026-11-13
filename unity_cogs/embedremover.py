@@ -29,5 +29,5 @@ class EmbedRemover(commands.Cog):
                 logging.warning(f"Did not have permission to remove embeds from {message.id} from {message.author}!")
 
 
-def setup(client):
-    client.add_cog(EmbedRemover(client))
+async def setup(client):
+    await client.add_cog(EmbedRemover(client))
